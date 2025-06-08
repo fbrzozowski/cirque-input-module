@@ -328,6 +328,7 @@ static int8_t apply_sigmoid_acceleration(const struct device *dev, int8_t delta)
     // Calculate acceleration using sigmoid function
     // sigmoid(x) = x / (1 + abs(x))
     /*float accel = (float)delta / (1.0f + fabsf((float)delta / config->acceleration_threshold));*/
+     /*return np.sign(delta) * np.power(np.abs(delta) / threshold, exponent) * threshold*/
     float sign = (delta >= 0) ? 1.0f : -1.0f;
     float abs_delta = fabsf((float)delta);
     float accel = sign * powf(abs_delta / threshold, factor) * threshold;
@@ -378,12 +379,13 @@ static void pinnacle_report_data(const struct device *dev) {
     }
 
     if (data->in_int) {
-        LOG_DBG("Clearing status bit");
+        //LOG_DBG("Clearing status bit");
         ret = pinnacle_clear_status(dev);
         data->in_int = true;
     }
 
     uint32_t start = k_cycle_get_32();
+
 
     if (config->polynomial_acceleration) {
         dx = apply_polynomial_acceleration(dev, dx);
@@ -404,12 +406,13 @@ static void pinnacle_report_data(const struct device *dev) {
     // Convert cycles to microseconds or nanoseconds if CPU freq known
     // e.g., CPU_FREQ_HZ = 64,000,000 (64 MHz)
     uint32_t elapsed_ns = (elapsed_cycles * 1000000000ULL) / 64000000;
-    LOG_DBG("Acceleration function took %u cycles (~%u ns)\n", elapsed_cycles, elapsed_ns);
+    //LOG_DBG("Acceleration function took %u cycles (~%u ns)\n", elapsed_cycles, elapsed_ns);
     
     // Update last delta values
     data->last_dx = dx;
     data->last_dy = dy;
 
+    LOG_DBG("X/Y deltas %d/%d", dx, dy);
 
     if (!config->no_taps && (btn || data->btn_cache)) {
         for (int i = 0; i < 3; i++) {
@@ -436,7 +439,7 @@ static void pinnacle_work_cb(struct k_work *work) {
 static void pinnacle_gpio_cb(const struct device *port, struct gpio_callback *cb, uint32_t pins) {
     struct pinnacle_data *data = CONTAINER_OF(cb, struct pinnacle_data, gpio_cb);
 
-    LOG_DBG("HW DR asserted");
+    //LOG_DBG("HW DR asserted");
     data->in_int = true;
     k_work_submit(&data->work);
 }
@@ -547,7 +550,7 @@ int pinnacle_set_sleep(const struct device *dev, bool enabled) {
         return 0;
     }
 
-    LOG_DBG("Setting sleep: %s", (enabled ? "on" : "off"));
+    //LOG_DBG("Setting sleep: %s", (enabled ? "on" : "off"));
     WRITE_BIT(sys_cfg, PINNACLE_SYS_CFG_EN_SLEEP_BIT, enabled ? 1 : 0);
 
     ret = pinnacle_write(dev, PINNACLE_SYS_CFG, sys_cfg);
@@ -570,7 +573,7 @@ static int pinnacle_init(const struct device *dev) {
         LOG_ERR("Failed to get the FW ID %d", ret);
     }
 
-    LOG_DBG("Found device with FW ID: 0x%02x, Version: 0x%02x", fw_id[0], fw_id[1]);
+    //LOG_DBG("Found device with FW ID: 0x%02x, Version: 0x%02x", fw_id[0], fw_id[1]);
 
     data->in_int = false;
     k_msleep(10);
@@ -620,12 +623,12 @@ static int pinnacle_init(const struct device *dev) {
     ret = pinnacle_seq_read(dev, PINNACLE_SLEEP_INTERVAL, packet, 1);
 
     if (ret >= 0) {
-        LOG_DBG("Default sleep interval %d", packet[0]);
+        //LOG_DBG("Default sleep interval %d", packet[0]);
     }
 
     ret = pinnacle_write(dev, PINNACLE_SLEEP_INTERVAL, 255);
     if (ret <= 0) {
-        LOG_DBG("Failed to update sleep interaval %d", ret);
+        //LOG_DBG("Failed to update sleep interaval %d", ret);
     }
 
     uint8_t feed_cfg2 = PINNACLE_FEED_CFG2_EN_IM | PINNACLE_FEED_CFG2_EN_BTN_SCRL;
