@@ -1,3 +1,6 @@
+> [!CAUTION]
+> Work in progress, acceleration does not work as intended!
+
 The main goal is to simulate feel of apple's magic trackpad feel.
 ### Configuration
 
@@ -23,5 +26,7 @@ The factor and threshold are divided by 100 (`POINTER_ACCELERATION_SCALE`) to co
 - [ ] 
 
 ### Strategies comparison
-Personally I like the feel of high threshold/factor variant.
+> [!NOTE]
+> Personally I like the feel of high threshold/factor variant.
+
 ![image](docs/comparison.png)
