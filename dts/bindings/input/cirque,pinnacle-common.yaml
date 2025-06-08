@@ -39,9 +39,13 @@ properties:
     description: Enable polynomial acceleration for cursor movement
   acceleration-factor:
     type: int
-    default: 150
+    default: 125
     description: Multiplier for sigmoid acceleration curve
   acceleration-threshold:
     type: int
-    default: 5
+    default: 900
     description: Movement threshold to start accelerating
+  acceleration-exponent:
+    type: int
+    default: 200
+    description: Movement curves exponent

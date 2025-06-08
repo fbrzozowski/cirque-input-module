@@ -117,6 +117,7 @@ struct pinnacle_config {
     bool polynomial_acceleration;
     float acceleration_factor;
     float acceleration_threshold;
+    float acceleration_exponent;
 
 };
 
