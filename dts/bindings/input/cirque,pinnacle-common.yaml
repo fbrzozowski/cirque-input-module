@@ -28,4 +28,20 @@ properties:
   y-axis-z-min:
     type: int
     default: 4
-
+  hybrid-acceleration:
+    type: boolean
+    description: Enable hybrid (sigmoid/polynomial) acceleration for cursor movement
+  sigmoid-acceleration:
+    type: boolean
+    description: Enable sigmoid acceleration for cursor movement
+  polynomial-acceleration:
+    type: boolean
+    description: Enable polynomial acceleration for cursor movement
+  acceleration-factor:
+    type: int
+    default: 150
+    description: Multiplier for sigmoid acceleration curve
+  acceleration-threshold:
+    type: int
+    default: 5
+    description: Movement threshold to start accelerating

@@ -78,6 +78,12 @@ struct pinnacle_data {
     const struct device *dev;
     struct gpio_callback gpio_cb;
     struct k_work work;
+
+    // Acceleration tracking
+    int32_t last_dx;
+    int32_t last_dy;
+    int64_t last_timestamp;
+
 };
 
 enum pinnacle_sensitivity {
@@ -104,6 +110,14 @@ struct pinnacle_config {
     enum pinnacle_sensitivity sensitivity;
     uint8_t x_axis_z_min, y_axis_z_min;
     const struct gpio_dt_spec dr;
+
+    // Acceleration(s) parameters
+    bool sigmoid_acceleration;
+    bool hybrid_acceleration;
+    bool polynomial_acceleration;
+    float acceleration_factor;
+    float acceleration_threshold;
+
 };
 
 int pinnacle_set_sleep(const struct device *dev, bool enabled);

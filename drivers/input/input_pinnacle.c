@@ -1,4 +1,5 @@
 #define DT_DRV_COMPAT cirque_pinnacle
+#define POINTER_ACCELERATION_FACTOR 100.0f
 
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/init.h>
@@ -229,6 +230,115 @@ static int pinnacle_era_write(const struct device *dev, const uint16_t addr, uin
     return ret;
 }
 
+static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) {
+    const struct pinnacle_config *config = dev->config;
+    if (!config->hybrid_acceleration || abs(delta) < config->acceleration_threshold) {
+        return delta;
+    }
+
+    float threshold = (float)config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
+    float abs_delta = fabsf((float)delta);
+
+    // Normalize input relative to threshold
+    float normalized = abs_delta / threshold;
+
+    // Polynomial part (exponent controls curve steepness)
+    float exponent = 2.0f;
+    float poly = powf(normalized, exponent);
+
+    // Sigmoid smoothing part (tanh used here)
+    float sigmoid = tanhf(poly); //TODO: This should be a lookup table
+
+    // Combine: scale sigmoid by polynomial and factor
+    float accel_factor = config->acceleration_factor / POINTER_ACCELERATION_FACTOR;
+
+    // Final acceleration value
+    float accel = threshold * sigmoid * accel_factor;
+
+    if (delta < 0) {
+        accel = -accel;
+    }
+
+    // Round and clamp
+    int result = (int)(accel + (accel > 0 ? 0.5f : -0.5f));
+    if (result > INT8_MAX) result = INT8_MAX;
+    if (result < INT8_MIN) result = INT8_MIN;
+
+    return (int8_t)result;
+}
+
+
+static int8_t apply_polynomial_acceleration(const struct device *dev, int8_t delta) {
+    const struct pinnacle_config *config = dev->config;
+    if (!config->polynomial_acceleration || abs(delta) < config->acceleration_threshold) {
+        return delta;
+    }
+
+    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
+    float abs_delta = fabsf((float)delta);
+
+    // Normalize delta relative to threshold
+    float normalized = abs_delta / threshold;
+
+    // Polynomial exponent (e.g., 2 for quadratic acceleration)
+    float exponent = 2.0f;
+
+    // Acceleration factor multiplier - tune this
+    float factor = config->acceleration_factor / POINTER_ACCELERATION_FACTOR;
+    float accel_factor = config->acceleration_factor / POINTER_ACCELERATION_FACTOR;
+
+    // Polynomial acceleration formula: output = threshold * (normalized^exponent) * accel_factor
+    float accel = threshold * powf(normalized, exponent) * accel_factor;
+
+    // Keep sign of delta
+    if (delta < 0) {
+        accel = -accel;
+    }
+
+    // Round and clamp result to int8_t range
+    int result = (int)(accel + (accel > 0 ? 0.5f : -0.5f));
+    if (result > INT8_MAX) result = INT8_MAX;
+    if (result < INT8_MIN) result = INT8_MIN;
+
+    return (int8_t)result;
+}
+
+// Apply sigmoid acceleration to the input delta
+static int8_t apply_sigmoid_acceleration(const struct device *dev, int8_t delta) {
+    const struct pinnacle_config *config = dev->config;
+    struct pinnacle_data *data = dev->data;
+    
+    if (!config->sigmoid_acceleration || abs(delta) < config->acceleration_threshold) {
+        return delta;
+    }
+    
+    float factor = config->acceleration_factor / POINTER_ACCELERATION_FACTOR;
+    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
+
+    // Get time since last movement
+    int64_t now = k_uptime_get();
+    int64_t time_delta = now - data->last_timestamp;
+    data->last_timestamp = now;
+    
+    // If it's been too long, reset acceleration
+    if (time_delta > 100) {
+        return delta;
+    }
+    
+    // Calculate acceleration using sigmoid function
+    // sigmoid(x) = x / (1 + abs(x))
+    /*float accel = (float)delta / (1.0f + fabsf((float)delta / config->acceleration_threshold));*/
+    float sign = (delta >= 0) ? 1.0f : -1.0f;
+    float abs_delta = fabsf((float)delta);
+    float accel = sign * powf(abs_delta / threshold, factor) * threshold;
+
+    // Apply acceleration factor
+    /*accel = accel * config->acceleration_factor;*/
+    
+    // Scale based on the original direction
+    return (delta >= 0) ? (int8_t)(accel + 0.5f) : (int8_t)(accel - 0.5f);
+}
+
 static void pinnacle_report_data(const struct device *dev) {
     const struct pinnacle_config *config = dev->config;
     uint8_t packet[3];
@@ -272,6 +382,34 @@ static void pinnacle_report_data(const struct device *dev) {
         ret = pinnacle_clear_status(dev);
         data->in_int = true;
     }
+
+    uint32_t start = k_cycle_get_32();
+
+    if (config->polynomial_acceleration) {
+        dx = apply_polynomial_acceleration(dev, dx);
+        dy = apply_polynomial_acceleration(dev, dy);
+    }
+    if (config->sigmoid_acceleration) {
+        dx = apply_sigmoid_acceleration(dev, dx);
+        dy = apply_sigmoid_acceleration(dev, dy);
+    }
+
+    if (config->hybrid_acceleration) {
+        dx = apply_hybrid_acceleration(dev, dx);
+        dy = apply_hybrid_acceleration(dev, dy);
+    }
+
+    uint32_t end = k_cycle_get_32();
+    uint32_t elapsed_cycles = end - start;
+    // Convert cycles to microseconds or nanoseconds if CPU freq known
+    // e.g., CPU_FREQ_HZ = 64,000,000 (64 MHz)
+    uint32_t elapsed_ns = (elapsed_cycles * 1000000000ULL) / 64000000;
+    LOG_DBG("Acceleration function took %u cycles (~%u ns)\n", elapsed_cycles, elapsed_ns);
+    
+    // Update last delta values
+    data->last_dx = dx;
+    data->last_dy = dy;
+
 
     if (!config->no_taps && (btn || data->btn_cache)) {
         for (int i = 0; i < 3; i++) {
@@ -544,6 +682,7 @@ static int pinnacle_init(const struct device *dev) {
     return 0;
 }
 
+
 #if IS_ENABLED(CONFIG_PM_DEVICE)
 
 static int pinnacle_pm_action(const struct device *dev, enum pm_device_action action) {
@@ -580,6 +719,11 @@ static int pinnacle_pm_action(const struct device *dev, enum pm_device_action ac
         .y_axis_z_min = DT_INST_PROP_OR(n, y_axis_z_min, 4),                                       \
         .sensitivity = DT_INST_ENUM_IDX_OR(n, sensitivity, PINNACLE_SENSITIVITY_1X),               \
         .dr = GPIO_DT_SPEC_GET_OR(DT_DRV_INST(n), dr_gpios, {}),                                   \
+        .sigmoid_acceleration = DT_INST_PROP_OR(n, sigmoid_acceleration, false),                   \
+        .polynomial_acceleration = DT_INST_PROP_OR(n, polynomial_acceleration, false),                \
+        .hybrid_acceleration = DT_INST_PROP_OR(n, hybrid_acceleration, false),                \
+        .acceleration_factor = DT_INST_PROP_OR(n, acceleration_factor, 150),                       \
+        .acceleration_threshold = DT_INST_PROP_OR(n, acceleration_threshold, 500),                 \
     };                                                                                             \
     PM_DEVICE_DT_INST_DEFINE(n, pinnacle_pm_action);                                               \
     DEVICE_DT_INST_DEFINE(n, pinnacle_init, PM_DEVICE_DT_INST_GET(n), &pinnacle_data_##n,          \
