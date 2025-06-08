@@ -232,11 +232,14 @@ static int pinnacle_era_write(const struct device *dev, const uint16_t addr, uin
 
 static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) {
     const struct pinnacle_config *config = dev->config;
-    if (!config->hybrid_acceleration || abs(delta) < config->acceleration_threshold) {
+    struct pinnacle_data *data = dev->data;
+
+    float threshold = (float)config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
+
+    if (abs(delta) < threshold) {
         return delta;
     }
 
-    float threshold = (float)config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
     float abs_delta = fabsf((float)delta);
 
     float normalized = abs_delta / threshold;
@@ -271,11 +274,14 @@ static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) 
 
 static int8_t apply_polynomial_acceleration(const struct device *dev, int8_t delta) {
     const struct pinnacle_config *config = dev->config;
-    if (!config->polynomial_acceleration || abs(delta) < config->acceleration_threshold) {
+    struct pinnacle_data *data = dev->data;
+
+    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
+
+    if (abs(delta) < threshold) {
         return delta;
     }
 
-    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
     float abs_delta = fabsf((float)delta);
     float normalized = abs_delta / threshold; // Normalize delta relative to threshold
     float exponent = 2.0f; // Polynomial exponent (2 for quadratic acceleration)
@@ -311,13 +317,14 @@ static int8_t apply_polynomial_acceleration(const struct device *dev, int8_t del
 static int8_t apply_sigmoid_acceleration(const struct device *dev, int8_t delta) {
     const struct pinnacle_config *config = dev->config;
     struct pinnacle_data *data = dev->data;
+
+    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
     
-    if (!config->sigmoid_acceleration || abs(delta) < config->acceleration_threshold) {
+    if (abs(delta) < threshold) {
         return delta;
     }
     
     float factor = config->acceleration_factor / POINTER_ACCELERATION_FACTOR;
-    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_FACTOR;
 
     // Get time since last movement and restart acceleration if needed (ms)
     int64_t now = k_uptime_get();
@@ -396,7 +403,7 @@ static void pinnacle_report_data(const struct device *dev) {
     //TODO: Benchmark - remove
     uint32_t end = k_cycle_get_32();
     uint32_t elapsed_ns = ((end - start) * 1000000000) / 64000000; // 64,000,000 (64 MHz)
-    LOG_DBG("Acceleration function took %u cycles (~%u ns)\n", elapsed_cycles, elapsed_ns);
+    LOG_DBG("Acceleration function took ~%u ns\n", elapsed_ns);
     
     data->last_dx = dx;
     data->last_dy = dy;
