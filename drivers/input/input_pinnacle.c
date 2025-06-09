@@ -234,11 +234,16 @@ static int pinnacle_era_write(const struct device *dev, const uint16_t addr, uin
 static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) {
     const struct pinnacle_config *config = dev->config;
     struct pinnacle_data *data = dev->data;
-    float threshold = (float)config->acceleration_threshold / POINTER_ACCELERATION_SCALE;
-    if (abs(delta) < threshold) {
-        LOG_DBG("Threshold not exceeded %d (deadband=%d)", (int)delta, (int)threshold);
-        return delta;
-    }
+
+    // FIXME: This producese jittery movements for low accelerations
+    //if (abs(delta) < threshold) {
+    //    LOG_DBG("Threshold not exceeded %d (deadband=%d)", (int)delta, (int)threshold);
+    //    return delta;
+    //}
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", delta);
+    LOG_DBG("Delta: %s", buf);
 
     int64_t now = k_uptime_get();
     int64_t time_delta = now - data->last_timestamp;
@@ -247,13 +252,14 @@ static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) 
         return delta;
     }
 
+    float threshold = (float)config->acceleration_threshold;
     float abs_delta = fabsf((float)delta);
     float normalized = abs_delta / threshold;
+
     float exponent = config->acceleration_exponent / POINTER_ACCELERATION_SCALE;
-    float poly = powf(normalized, exponent);
-    float sigmoid = tanhf(poly);
     float accel_factor = config->acceleration_factor / POINTER_ACCELERATION_SCALE;
-    float accel = threshold * sigmoid * accel_factor;
+
+    float accel = threshold * tanhf(powf(normalized, exponent)) * accel_factor;
 
     if (delta < 0) {
         accel = -accel;
@@ -262,7 +268,10 @@ static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) 
     int result = (int)(accel + (accel > 0 ? 0.5f : -0.5f));
     if (result > INT8_MAX) result = INT8_MAX;
     if (result < INT8_MIN) result = INT8_MIN;
-    LOG_DBG("Raw delta/accelerated/diff %d/%d/%d", delta, result, (result-delta));
+
+    char buf2[32];
+    snprintf(buf2, sizeof(buf2), "%d", result);
+    LOG_DBG("Accelerated delta %s", buf2);
 
     return (int8_t)result;
 }
@@ -270,12 +279,12 @@ static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) 
 static int8_t apply_sigmoid_acceleration(const struct device *dev, int8_t delta) {
     const struct pinnacle_config *config = dev->config;
     struct pinnacle_data *data = dev->data;
-    if (abs(delta) < threshold) {
-        return delta;
-    }
+
+    // FIXME: This producese jittery movements for low accelerations
+    //if (abs(delta) < threshold) {
+    //    return delta;
+    //}
     
-    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_SCALE;
-    float factor = config->acceleration_factor / POINTER_ACCELERATION_SCALE;
 
     int64_t now = k_uptime_get();
     int64_t time_delta = now - data->last_timestamp;
@@ -283,6 +292,9 @@ static int8_t apply_sigmoid_acceleration(const struct device *dev, int8_t delta)
     if (time_delta > 100) {
         return delta;
     }
+
+    float factor = config->acceleration_factor / POINTER_ACCELERATION_SCALE;
+    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_SCALE;
 
     float sign = (delta >= 0) ? 1.0f : -1.0f;
     float abs_delta = fabsf((float)delta);
@@ -294,31 +306,6 @@ static int8_t apply_sigmoid_acceleration(const struct device *dev, int8_t delta)
     if (result > INT8_MAX) result = INT8_MAX;
     if (result < INT8_MIN) result = INT8_MIN;
     return result;
-}
-
-static int8_t apply_polynomial_acceleration(const struct device *dev, int8_t delta) {
-    const struct pinnacle_config *config = dev->config;
-    float threshold = (float)config->acceleration_threshold / POINTER_ACCELERATION_SCALE;
-    if (abs(delta) < threshold) {
-        return delta;
-    }
-
-    float abs_delta = fabsf((float)delta);
-    float normalized = abs_delta / threshold;
-    float exponent = config->acceleration_exponent / POINTER_ACCELERATION_SCALE;
-    float accel_factor = config->acceleration_factor / POINTER_ACCELERATION_SCALE;
-    float accel = threshold * powf(normalized, exponent) * accel_factor;
-
-    if (delta < 0) {
-        accel = -accel;
-    }
-
-    // Round and clamp result to int8_t range
-    int result = (int)(accel + (accel > 0 ? 0.5f : -0.5f));
-    if (result > INT8_MAX) result = INT8_MAX;
-    if (result < INT8_MIN) result = INT8_MIN;
-
-    return (int8_t)result;
 }
 
 static void pinnacle_report_data(const struct device *dev) {
@@ -365,9 +352,9 @@ static void pinnacle_report_data(const struct device *dev) {
         data->in_int = true;
     }
 
-    uint32_t start = k_cycle_get_32(); //TODO: Benchmark remove
+    /*uint32_t start = k_cycle_get_32(); //TODO: Benchmark remove*/
 
-    LOG_DBG("Delta: %d/%d", dx, dy);
+    /*LOG_DBG("Delta: %d/%d", dx, dy);*/
     if (config->sigmoid_acceleration) {
         dx = apply_sigmoid_acceleration(dev, dx);
         dy = apply_sigmoid_acceleration(dev, dy);
@@ -376,14 +363,10 @@ static void pinnacle_report_data(const struct device *dev) {
         dx = apply_hybrid_acceleration(dev, dx);
         dy = apply_hybrid_acceleration(dev, dy);
     }
-    if (config->polynomial_acceleration) {
-        dx = apply_polynomial_acceleration(dev, dx);
-        dy = apply_polynomial_acceleration(dev, dy);
-    }
 
-    uint32_t end = k_cycle_get_32();
-    uint32_t elapsed_ns = ((end - start) * 1000000000) / 64000000;
-    LOG_DBG("Acceleration function took ~%d ns\n", elapsed_ns);
+    /*uint32_t end = k_cycle_get_32();*/
+    /*uint32_t elapsed_ns = ((end - start) * 1000000000) / 64000000;*/
+    /*LOG_DBG("Acceleration function took ~%d ns\n", elapsed_ns);*/
 
     data->last_dx = dx;
     data->last_dy = dy;
@@ -702,7 +685,6 @@ static int pinnacle_pm_action(const struct device *dev, enum pm_device_action ac
         .dr = GPIO_DT_SPEC_GET_OR(DT_DRV_INST(n), dr_gpios, {}),                                   \
         .sigmoid_acceleration = DT_INST_PROP_OR(n, sigmoid_acceleration, false),                   \
         .hybrid_acceleration = DT_INST_PROP_OR(n, hybrid_acceleration, false),                     \
-        .polynomial_acceleration = DT_INST_PROP_OR(n, polynomial_acceleration, false),             \
         .acceleration_factor = DT_INST_PROP_OR(n, acceleration_factor, 150),                      \
         .acceleration_threshold = DT_INST_PROP_OR(n, acceleration_threshold, 950),                  \
         .acceleration_exponent = DT_INST_PROP_OR(n, acceleration_exponent, 200),                  \

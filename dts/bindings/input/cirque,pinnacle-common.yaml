@@ -34,9 +34,6 @@ properties:
   sigmoid-acceleration:
     type: boolean
     description: Enable sigmoid acceleration for cursor movement
-  polynomial-acceleration:
-    type: boolean
-    description: Enable polynomial acceleration for cursor movement
   acceleration-factor:
     type: int
     default: 125
@@ -48,4 +45,4 @@ properties:
   acceleration-exponent:
     type: int
     default: 200
-    description: Movement curves exponent
+    description: Acceleration curve exponent (curve smoothness)
