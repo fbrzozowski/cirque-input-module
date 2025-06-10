@@ -72,13 +72,23 @@
 #define PINNACLE_PACKET0_X_SIGN BIT(4)   // X delta sign
 #define PINNACLE_PACKET0_Y_SIGN BIT(5)   // Y delta sign
 
+struct inertial_cursor_data {
+    double delta_x;
+    double delta_y;
+    int delta_time;
+    double velocity_decay;
+    struct k_work_delayable inertial_work;
+};
+
 struct pinnacle_data {
     uint8_t btn_cache;
     bool in_int;
     const struct device *dev;
     struct gpio_callback gpio_cb;
     struct k_work work;
+    struct inertial_cursor_data inertial_cursor;
 };
+
 
 enum pinnacle_sensitivity {
     PINNACLE_SENSITIVITY_1X,

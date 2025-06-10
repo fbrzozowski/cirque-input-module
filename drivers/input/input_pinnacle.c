@@ -229,6 +229,7 @@ static int pinnacle_era_write(const struct device *dev, const uint16_t addr, uin
     return ret;
 }
 
+
 static void pinnacle_report_data(const struct device *dev) {
     const struct pinnacle_config *config = dev->config;
     uint8_t packet[3];
@@ -284,11 +285,50 @@ static void pinnacle_report_data(const struct device *dev) {
 
     data->btn_cache = btn;
 
+    if (dx || dy) {
+        input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);
+        input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);
+
+        // Save delta for inertia
+        data->inertial_cursor.delta_x = dx;
+        data->inertial_cursor.delta_y = dy;
+        k_work_cancel_delayable(&data->inertial_cursor.inertial_work);
+    } else if ((fabs(data->inertial_cursor.delta_x) > 0.5 ||
+    /*} else if (btn == 0 && (fabs(data->inertial_cursor.delta_x) > 0.5 ||*/
+                            fabs(data->inertial_cursor.delta_y) > 0.5)) {
+        // Start inertia after release
+        LOG_DBG("Scheduling intertial movement");
+        k_work_schedule(&data->inertial_cursor.inertial_work, K_MSEC(16));
+    }
+
     input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);
     input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);
 
     return;
 }
+
+static void inertial_cursor_cb(struct k_work *work) {
+    struct inertial_cursor_data *cursor =
+        CONTAINER_OF(work, struct inertial_cursor_data, inertial_work.work);
+    struct pinnacle_data *data =
+        CONTAINER_OF(cursor, struct pinnacle_data, inertial_cursor);
+
+    cursor->delta_x *= cursor->velocity_decay;
+    cursor->delta_y *= cursor->velocity_decay;
+
+    if (fabs(cursor->delta_x) < 0.1 && fabs(cursor->delta_y) < 0.1) {
+        return; // Stop when nearly stationary
+    }
+
+    LOG_DBG("inertial_cursor_cb triggered");
+
+    input_report_rel(data->dev, INPUT_REL_X, (int)cursor->delta_x, false, K_FOREVER);
+    input_report_rel(data->dev, INPUT_REL_Y, (int)cursor->delta_y, true, K_FOREVER);
+
+    k_work_schedule(&cursor->inertial_work, K_MSEC(16)); // ~60 FPS
+    LOG_DBG("inertial_cursor_cb rescheduled");
+}
+
 
 static void pinnacle_work_cb(struct k_work *work) {
     struct pinnacle_data *data = CONTAINER_OF(work, struct pinnacle_data, work);
@@ -535,7 +575,14 @@ static int pinnacle_init(const struct device *dev) {
         return -EIO;
     }
 
+    data->inertial_cursor.velocity_decay = 0.20; // tweak as needed
+
     k_work_init(&data->work, pinnacle_work_cb);
+
+    LOG_DBG("Initializing inertial cursor work");
+    k_work_init_delayable(&data->inertial_cursor.inertial_work, inertial_cursor_cb);
+    k_work_schedule(&data->inertial_cursor.inertial_work, K_MSEC(16));
+    LOG_DBG("Scheduled inertial cursor work");
 
     pinnacle_write(dev, PINNACLE_FEED_CFG1, feed_cfg1);
 
@@ -561,6 +608,7 @@ static int pinnacle_pm_action(const struct device *dev, enum pm_device_action ac
 
 #define PINNACLE_INST(n)                                                                           \
     static struct pinnacle_data pinnacle_data_##n;                                                 \
+    static struct inertial_cursor_data inertial_cursor_data_##n;                                                 \
     static const struct pinnacle_config pinnacle_config_##n = {                                    \
         COND_CODE_1(DT_INST_ON_BUS(n, i2c),                                                        \
                     (.bus = {.i2c = I2C_DT_SPEC_INST_GET(n)}, .seq_read = pinnacle_i2c_seq_read,   \
