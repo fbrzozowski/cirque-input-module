@@ -78,6 +78,7 @@ struct inertial_cursor_data {
     int delta_time;
     double velocity_decay;
     struct k_work_delayable inertial_work;
+    bool motion_detected;
 };
 
 struct pinnacle_data {

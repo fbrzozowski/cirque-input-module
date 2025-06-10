@@ -240,19 +240,20 @@ static void pinnacle_report_data(const struct device *dev) {
         return;
     }
 
-    LOG_HEXDUMP_DBG(packet, 1, "Pinnacle Status1");
+    /*LOG_HEXDUMP_DBG(packet, 1, "Pinnacle Status1");*/
 
     // Ignore 0xFF packets that indicate communcation failure, or if SW_DR isn't asserted
-    if (packet[0] == 0xFF || !(packet[0] & PINNACLE_STATUS1_SW_DR)) {
-        return;
-    }
+    // Should be enabled for non intertial movement? 
+    /*if (packet[0] == 0xFF || !(packet[0] & PINNACLE_STATUS1_SW_DR)) {*/
+        /*return;*/
+    /*}*/
     ret = pinnacle_seq_read(dev, PINNACLE_2_2_PACKET0, packet, 3);
     if (ret < 0) {
         LOG_ERR("read packet: %d", ret);
         return;
     }
 
-    LOG_HEXDUMP_DBG(packet, 3, "Pinnacle Packets");
+    /*LOG_HEXDUMP_DBG(packet, 3, "Pinnacle Packets");*/
 
     struct pinnacle_data *data = dev->data;
     uint8_t btn = packet[0] &
@@ -269,7 +270,7 @@ static void pinnacle_report_data(const struct device *dev) {
     }
 
     if (data->in_int) {
-        LOG_DBG("Clearing status bit");
+        /*LOG_DBG("Clearing status bit");*/
         ret = pinnacle_clear_status(dev);
         data->in_int = true;
     }
@@ -285,20 +286,24 @@ static void pinnacle_report_data(const struct device *dev) {
 
     data->btn_cache = btn;
 
+    static bool motion_detected = false;
+
     if (dx || dy) {
         input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);
         input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);
 
-        // Save delta for inertia
+        LOG_DBG("%d/%d", dx, dy);
+
         data->inertial_cursor.delta_x = dx;
         data->inertial_cursor.delta_y = dy;
+        data->inertial_cursor.motion_detected = true;
+
         k_work_cancel_delayable(&data->inertial_cursor.inertial_work);
-    } else if ((fabs(data->inertial_cursor.delta_x) > 0.5 ||
-    /*} else if (btn == 0 && (fabs(data->inertial_cursor.delta_x) > 0.5 ||*/
-                            fabs(data->inertial_cursor.delta_y) > 0.5)) {
-        // Start inertia after release
-        LOG_DBG("Scheduling intertial movement");
+    } else if (btn == 0 && motion_detected) {
+        // trigger inertia ONCE
+        LOG_DBG("Scheduling inertial movement");
         k_work_schedule(&data->inertial_cursor.inertial_work, K_MSEC(16));
+        data->inertial_cursor.motion_detected = false;
     }
 
     input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);
@@ -575,18 +580,18 @@ static int pinnacle_init(const struct device *dev) {
         return -EIO;
     }
 
-    data->inertial_cursor.velocity_decay = 0.20; // tweak as needed
+    data->inertial_cursor.velocity_decay = 0.05; // tweak as needed
 
+
+    pinnacle_write(dev, PINNACLE_FEED_CFG1, feed_cfg1);
+
+    set_int(dev, true);
     k_work_init(&data->work, pinnacle_work_cb);
 
     LOG_DBG("Initializing inertial cursor work");
     k_work_init_delayable(&data->inertial_cursor.inertial_work, inertial_cursor_cb);
     k_work_schedule(&data->inertial_cursor.inertial_work, K_MSEC(16));
     LOG_DBG("Scheduled inertial cursor work");
-
-    pinnacle_write(dev, PINNACLE_FEED_CFG1, feed_cfg1);
-
-    set_int(dev, true);
 
     return 0;
 }
