@@ -286,54 +286,86 @@ static void pinnacle_report_data(const struct device *dev) {
 
     data->btn_cache = btn;
 
-    static bool motion_detected = false;
+    /*static bool motion_detected = false;*/
 
+    /*if (dx || dy) {*/
+        /*input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);*/
+        /*input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);*/
+
+
+        /*data->inertial_cursor.delta_x = dx;*/
+        /*data->inertial_cursor.delta_y = dy;*/
+        /*data->inertial_cursor.motion_detected = true;*/
+
+        /*k_work_cancel_delayable(&data->inertial_cursor.inertial_work);*/
+    /*} else if (btn == 0 && motion_detected) {*/
+        /*// trigger inertia ONCE*/
+        /*LOG_DBG("Scheduling inertial movement");*/
+        /*k_work_schedule(&data->inertial_cursor.inertial_work, K_MSEC(16));*/
+        /*data->inertial_cursor.motion_detected = false;*/
+    /*}*/
+
+    /*input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);*/
+
+    /*input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);*/
     if (dx || dy) {
         input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);
         input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);
 
-        LOG_DBG("%d/%d", dx, dy);
-
         data->inertial_cursor.delta_x = dx;
         data->inertial_cursor.delta_y = dy;
-        data->inertial_cursor.motion_detected = true;
+
+        LOG_DBG("%d/%d", dx, dy);
 
         k_work_cancel_delayable(&data->inertial_cursor.inertial_work);
-    } else if (btn == 0 && motion_detected) {
-        // trigger inertia ONCE
-        LOG_DBG("Scheduling inertial movement");
-        k_work_schedule(&data->inertial_cursor.inertial_work, K_MSEC(16));
-        data->inertial_cursor.motion_detected = false;
+        LOG_DBG("dx/dy=%d/%d -> scheduling stop_check_work", dx, dy);
+        k_work_schedule(&data->inertial_cursor.stop_check_work, K_MSEC(30));
     }
-
-    input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);
-    input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);
 
     return;
 }
 
 static void inertial_cursor_cb(struct k_work *work) {
-    struct inertial_cursor_data *cursor =
-        CONTAINER_OF(work, struct inertial_cursor_data, inertial_work.work);
-    struct pinnacle_data *data =
-        CONTAINER_OF(cursor, struct pinnacle_data, inertial_cursor);
-
-    cursor->delta_x *= cursor->velocity_decay;
-    cursor->delta_y *= cursor->velocity_decay;
-
-    if (fabs(cursor->delta_x) < 0.1 && fabs(cursor->delta_y) < 0.1) {
-        return; // Stop when nearly stationary
-    }
+    struct inertial_cursor_data *cursor = CONTAINER_OF(work, struct inertial_cursor_data, inertial_work.work);
+    struct pinnacle_data *data = CONTAINER_OF(cursor, struct pinnacle_data, inertial_cursor);
+    const struct device *dev = data->dev;
 
     LOG_DBG("inertial_cursor_cb triggered");
 
-    input_report_rel(data->dev, INPUT_REL_X, (int)cursor->delta_x, false, K_FOREVER);
-    input_report_rel(data->dev, INPUT_REL_Y, (int)cursor->delta_y, true, K_FOREVER);
+    float dx = cursor->delta_x * data->inertial_cursor.velocity_decay;
+    float dy = cursor->delta_y * data->inertial_cursor.velocity_decay;
 
-    k_work_schedule(&cursor->inertial_work, K_MSEC(16)); // ~60 FPS
-    LOG_DBG("inertial_cursor_cb rescheduled");
+    // Update delta for next time
+    cursor->delta_x = dx;
+    cursor->delta_y = dy;
+
+    if (fabs(dx) < 0.5f && fabs(dy) < 0.5f) {
+        LOG_DBG("Inertial movement stopped");
+        return;
+    }
+
+    input_report_rel(dev, INPUT_REL_X, (int)dx, false, K_FOREVER);
+    input_report_rel(dev, INPUT_REL_Y, (int)dy, true, K_FOREVER);
+
+    LOG_DBG("Inertia dx/dy = %d/%d", (int)dx, (int)dy);
+
+    k_work_schedule(&cursor->inertial_work, K_MSEC(16));
 }
 
+static void pinnacle_inertia_check_cb(struct k_work *work) {
+    LOG_DBG("Running stop_check_work");
+    struct inertial_cursor_data *cursor =
+        CONTAINER_OF(work, struct inertial_cursor_data, stop_check_work.work);
+
+    struct pinnacle_data *data = CONTAINER_OF(cursor, struct pinnacle_data, inertial_cursor);
+
+    if (fabs(cursor->delta_x) > 1.0 || fabs(cursor->delta_y) > 1.0) {
+        LOG_DBG("Scheduling inertial movement from check");
+        k_work_schedule(&cursor->inertial_work, K_MSEC(16));
+    } else {
+        LOG_DBG("Movement too small, skipping inertia");
+    }
+}
 
 static void pinnacle_work_cb(struct k_work *work) {
     struct pinnacle_data *data = CONTAINER_OF(work, struct pinnacle_data, work);
@@ -580,7 +612,7 @@ static int pinnacle_init(const struct device *dev) {
         return -EIO;
     }
 
-    data->inertial_cursor.velocity_decay = 0.05; // tweak as needed
+    data->inertial_cursor.velocity_decay = 0.95; // tweak as needed
 
 
     pinnacle_write(dev, PINNACLE_FEED_CFG1, feed_cfg1);
@@ -590,6 +622,10 @@ static int pinnacle_init(const struct device *dev) {
 
     LOG_DBG("Initializing inertial cursor work");
     k_work_init_delayable(&data->inertial_cursor.inertial_work, inertial_cursor_cb);
+    k_work_init_delayable(&data->inertial_cursor.stop_check_work, pinnacle_inertia_check_cb);
+
+    k_work_schedule(&data->inertial_cursor.stop_check_work, K_SECONDS(1));
+
     k_work_schedule(&data->inertial_cursor.inertial_work, K_MSEC(16));
     LOG_DBG("Scheduled inertial cursor work");
 
