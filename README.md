@@ -2,7 +2,7 @@
 > This is work in progress feature!
  
 ### Modes Comparison
-Personally I like the feel of hybrid - more responsive/aggressive, ideal for the 40mm small form factor trackpad. You should play around with the values. Below is a good starting point and visualised acceleration vales. 
+Personally I like the feel of hybrid - more responsive/aggressive, ideal for the 40mm small form factor trackpad. You should play around with the values. Below is a good starting point and visualised acceleration curves. 
 
 | Mode    | Threshold (T) | Factor (F) | Exponent (E) |
 | ------- |---------------|------------|--------------|
