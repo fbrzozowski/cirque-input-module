@@ -28,12 +28,13 @@ properties:
   y-axis-z-min:
     type: int
     default: 4
-  hybrid-acceleration:
-    type: boolean
-    description: Enable hybrid (sigmoid/polynomial) acceleration for cursor movement
-  sigmoid-acceleration:
-    type: boolean
-    description: Enable sigmoid acceleration for cursor movement
+  acceleration-mode:
+    type: string
+    enum:
+      - NONE
+      - HYBRID
+      - SIGMOID
+    description: Pointer acceleration mode.
   acceleration-factor:
     type: int
     default: 125

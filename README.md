@@ -1,8 +1,25 @@
 > [!CAUTION]
-> Work in progress, acceleration does not work as intended!
+> This is work in progress feature!
+ 
+### Modes Comparison
+Personally I like the feel of hybrid - more responsive/aggressive, ideal for the 40mm small form factor trackpad. You should play around with the values. Below is a good starting point and visualised acceleration vales. 
 
-The main goal is to simulate feel of apple's magic trackpad feel.
-### Configuration
+| Mode    | Threshold (T) | Factor (F) | Exponent (E) |
+| ------- |---------------|------------|--------------|
+| HYBRID  | 128           | 500        | 155          |
+| SIGMOID | 850           | 165        | n/a          |
+
+> [!NOTE]
+> F, T & E variables are divided by 100 (POINTER_ACCELERATION_SCALE) to convert them into appropriate float values. By default, Zephyr only supports integers for property types.
+
+> [!CAUTION]
+> `Threshold` for hybrid mode is not divided!!! Think of this value as acceleration limit taper starting point (exact limit is `threshold*factor`). Look at the second graph.
+
+![image](docs/comparison.png)
+#### Hybrid with lower acceleration limit
+![acceleration limit](docs/hybrid-limits.png)
+
+### Sample Configuration
 
 ```
 glidepoint: glidepoint@2a {
@@ -10,17 +27,13 @@ glidepoint: glidepoint@2a {
     ...
 
     // Enable and configure pointer acceleration (choose one!)
-    sigmoid-acceleration;
-    acceleration-threshold=<850>;
-    acceleration-factor=<165>;
-
-    hybrid-acceleration;
-    acceleration-threshold=<128>; //Curve limit
-    acceleration-factor=<435>;
-    acceleration-exponent=<160>;
+    acceleration-mode="NONE|HYBRID|SIGMOID";
+    acceleration-threshold=<128>; //Curve limit for hybrid acceleration
+    acceleration-factor=<500>;
+    acceleration-exponent=<155>;
 };
 ```
-The factor, threshold & exponent are divided by 100 (`POINTER_ACCELERATION_SCALE`) to convert them into appropriate float values, as Zephyr only supports integers for property types.
+
 ### TODO
 - [x] Replace `tanhf` w/ lookup table
 - [x] Benchmark 'input lag' with each acceleration functions
@@ -29,8 +42,3 @@ The factor, threshold & exponent are divided by 100 (`POINTER_ACCELERATION_SCALE
 - [ ] Enum for configuring acceleration strategy (preventing enabled 2 accelerations strategies at the same time)
 - [ ] Add pointer smoothing (data report interval???)
 
-### Strategies comparison
-> [!NOTE]
-> Personally I like the feel of hybrid, you should play around with the values  
-
-![image](docs/comparison.png)

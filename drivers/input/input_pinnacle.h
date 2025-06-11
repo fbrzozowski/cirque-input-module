@@ -80,13 +80,8 @@ struct pinnacle_data {
     struct k_work work;
 
     // Acceleration tracking
-    //FIXME: 8bit??
-    int32_t last_dx; 
-    int32_t last_dy;
     int64_t last_timestamp;
     int8_t accel_lookup[256];
-
-
 };
 
 enum pinnacle_sensitivity {
@@ -94,6 +89,12 @@ enum pinnacle_sensitivity {
     PINNACLE_SENSITIVITY_2X,
     PINNACLE_SENSITIVITY_3X,
     PINNACLE_SENSITIVITY_4X,
+};
+
+enum pointer_acceleration_mode {
+    NONE,
+    HYBRID,
+    SIGMOID,
 };
 
 typedef int (*pinnacle_seq_read_t)(const struct device *dev, const uint8_t addr, uint8_t *buf,
@@ -115,9 +116,10 @@ struct pinnacle_config {
     const struct gpio_dt_spec dr;
 
     // Acceleration(s) parameters
-    bool sigmoid_acceleration;
-    bool hybrid_acceleration;
-    bool polynomial_acceleration;
+    //bool sigmoid_acceleration;
+    //bool hybrid_acceleration;
+    enum pointer_acceleration_mode acceleration_mode;
+
     float acceleration_factor;
     float acceleration_threshold;
     float acceleration_exponent;
