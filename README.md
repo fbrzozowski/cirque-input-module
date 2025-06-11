@@ -39,6 +39,6 @@ glidepoint: glidepoint@2a {
 - [x] Benchmark 'input lag' with each acceleration functions
   - [hybrid acc. runtime vs lookup table](docs/benchmarks/benchmarks.md)
 - [ ] Config for explicit X/Y acceleration curves (X axis should be more responsive) - could be accomplished w/ `&zip_x_scaler` 
-- [ ] Enum for configuring acceleration strategy (preventing enabled 2 accelerations strategies at the same time)
+- [x] Enum for configuring acceleration strategy (preventing enabled 2 accelerations strategies at the same time)
 - [ ] Add pointer smoothing (data report interval???)
 
