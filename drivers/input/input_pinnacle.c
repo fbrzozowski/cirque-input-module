@@ -8,6 +8,7 @@
 #include <zephyr/pm/device.h>
 
 #include <zephyr/logging/log.h>
+#include <zephyr/sys_clock.h> //TODO: Remove - only for benchmarking
 #include <math.h>
 #include "input_pinnacle.h"
 
@@ -115,6 +116,10 @@ static int pinnacle_spi_write(const struct device *dev, const uint8_t addr, cons
     return ret;
 }
 #endif // DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
+
+void log_accel_runtime(uint32_t cycles) { //TODO: Remove needed for benchmarking
+    printk("ACCEL_CYCLES,%u\n", cycles);
+}
 
 static int set_int(const struct device *dev, const bool en) {
     const struct pinnacle_config *config = dev->config;
@@ -241,9 +246,9 @@ static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) 
     //    return delta;
     //}
 
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%d", delta);
-    LOG_DBG("Delta: %s", buf);
+    /*char buf[32];*/
+    /*snprintf(buf, sizeof(buf), "%d", delta);*/
+    /*LOG_DBG("Delta: %s", buf);*/
 
     int64_t now = k_uptime_get();
     int64_t time_delta = now - data->last_timestamp;
@@ -252,7 +257,8 @@ static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) 
         return delta;
     }
 
-    float threshold = (float)config->acceleration_threshold;
+    float threshold = (float)config->acceleration_threshold; 
+
     float abs_delta = fabsf((float)delta);
     float normalized = abs_delta / threshold;
 
@@ -269,9 +275,9 @@ static int8_t apply_hybrid_acceleration(const struct device *dev, int8_t delta) 
     if (result > INT8_MAX) result = INT8_MAX;
     if (result < INT8_MIN) result = INT8_MIN;
 
-    char buf2[32];
-    snprintf(buf2, sizeof(buf2), "%d", result);
-    LOG_DBG("Accelerated delta %s", buf2);
+    /*char buf2[32];*/
+    /*snprintf(buf2, sizeof(buf2), "%d", result);*/
+    /*LOG_DBG("Accelerated delta %s", buf2);*/
 
     return (int8_t)result;
 }
@@ -352,21 +358,23 @@ static void pinnacle_report_data(const struct device *dev) {
         data->in_int = true;
     }
 
-    /*uint32_t start = k_cycle_get_32(); //TODO: Benchmark remove*/
-
     /*LOG_DBG("Delta: %d/%d", dx, dy);*/
-    if (config->sigmoid_acceleration) {
-        dx = apply_sigmoid_acceleration(dev, dx);
-        dy = apply_sigmoid_acceleration(dev, dy);
-    }
+    /*if (config->sigmoid_acceleration) {*/
+        /*dx = apply_sigmoid_acceleration(dev, dx);*/
+        /*dy = apply_sigmoid_acceleration(dev, dy);*/
+    /*}*/
     if (config->hybrid_acceleration) {
-        dx = apply_hybrid_acceleration(dev, dx);
-        dy = apply_hybrid_acceleration(dev, dy);
-    }
+        uint32_t start = k_cycle_get_32(); //TODO: Benchmark remove
+        /*dx = apply_hybrid_acceleration(dev, dx);*/
+        /*dy = apply_hybrid_acceleration(dev, dy);*/
 
-    /*uint32_t end = k_cycle_get_32();*/
-    /*uint32_t elapsed_ns = ((end - start) * 1000000000) / 64000000;*/
-    /*LOG_DBG("Acceleration function took ~%d ns\n", elapsed_ns);*/
+        dx = data->accel_lookup[dx + 127];
+        dy = data->accel_lookup[dy + 127];
+
+        uint32_t end = k_cycle_get_32();
+        uint32_t elapsed_ns = (uint32_t)(((uint64_t)(end - start) * 1000000000ULL) / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
+        log_accel_runtime(elapsed_ns);
+    }
 
     data->last_dx = dx;
     data->last_dy = dy;
@@ -519,14 +527,50 @@ int pinnacle_set_sleep(const struct device *dev, bool enabled) {
     return ret;
 }
 
-static int pinnacle_init(const struct device *dev) {
-    struct pinnacle_data *data = dev->data;
-    const struct pinnacle_config *config = dev->config;
-    int ret;
+//TODO: Add sigmoid lookup table
+static void init_acceleration_curve(struct pinnacle_data *data,
+        struct pinnacle_config *config) {
+    LOG_DBG("Initialiazing acceleration curver lookup table");
+
+    uint32_t start = k_cycle_get_32(); //TODO: Benchmark remove
 
     data->last_dx = 0;
     data->last_dy = 0;
     data->last_timestamp = k_uptime_get();
+
+    //FIXME: not used for hybrid - need diving for sigmoid
+    float threshold = (float)config->acceleration_threshold; 
+    float exponent = config->acceleration_exponent / POINTER_ACCELERATION_SCALE;
+    float accel_factor = config->acceleration_factor / POINTER_ACCELERATION_SCALE;
+
+
+    for (int delta = -127; delta <= 128; delta++) {
+        float abs_delta = fabsf((float)delta);
+        float normalized = abs_delta / threshold;
+
+        float curve = tanhf(powf(normalized, exponent));
+        float accel = threshold * curve * accel_factor;
+
+        // Restore sign and clamp
+        float signed_accel = copysignf(accel, (float)delta);
+        int acc_delta = (int)(signed_accel + 0.5f);
+
+        if (acc_delta > 127) acc_delta = 127;
+        if (acc_delta < -127) acc_delta = -127;
+
+        data->accel_lookup[delta + 127] = (int8_t)acc_delta;
+    }
+
+    uint32_t end = k_cycle_get_32();
+    uint32_t elapsed_ns = (uint32_t)(((uint64_t)(end - start) * 1000000000ULL) / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
+    LOG_DBG("Lookup table initialized in %d ns", elapsed_ns);
+}
+
+
+static int pinnacle_init(const struct device *dev) {
+    struct pinnacle_data *data = dev->data;
+    const struct pinnacle_config *config = dev->config;
+    int ret;
 
     uint8_t fw_id[2];
     ret = pinnacle_seq_read(dev, PINNACLE_FW_ID, fw_id, 2);
@@ -642,6 +686,10 @@ static int pinnacle_init(const struct device *dev) {
     pinnacle_write(dev, PINNACLE_FEED_CFG1, feed_cfg1);
 
     set_int(dev, true);
+
+    printk("SYS_CLOCK_HW_CYCLES_PER_SEC,%u\n", CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
+
+    init_acceleration_curve(data, config);
 
     return 0;
 }

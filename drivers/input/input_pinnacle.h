@@ -80,9 +80,12 @@ struct pinnacle_data {
     struct k_work work;
 
     // Acceleration tracking
-    int32_t last_dx;
+    //FIXME: 8bit??
+    int32_t last_dx; 
     int32_t last_dy;
     int64_t last_timestamp;
+    int8_t accel_lookup[256];
+
 
 };
 
