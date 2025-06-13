@@ -8,7 +8,7 @@
 #include <zephyr/pm/device.h>
 
 #include <zephyr/logging/log.h>
-#include <zephyr/sys_clock.h> //TODO: Remove - only for benchmarking
+/*#include <zephyr/sys_clock.h> //TODO: Remove - only for benchmarking*/
 #include <math.h>
 #include "input_pinnacle.h"
 
@@ -117,7 +117,7 @@ static int pinnacle_spi_write(const struct device *dev, const uint8_t addr, cons
 }
 #endif // DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
 
-void log_accel_runtime(uint32_t cycles) { //TODO: Remove needed for benchmarking
+void log_accel_runtime(uint32_t cycles) { // TODO: Remove needed for benchmarking
     printk("ACCEL_CYCLES,%u\n", cycles);
 }
 
@@ -236,38 +236,6 @@ static int pinnacle_era_write(const struct device *dev, const uint16_t addr, uin
     return ret;
 }
 
-static int8_t apply_sigmoid_acceleration(const struct device *dev, int8_t delta) {
-    const struct pinnacle_config *config = dev->config;
-    struct pinnacle_data *data = dev->data;
-
-    // FIXME: This producese jittery movements for low accelerations
-    //if (abs(delta) < threshold) {
-    //    return delta;
-    //}
-    
-
-    int64_t now = k_uptime_get();
-    int64_t time_delta = now - data->last_timestamp;
-    data->last_timestamp = now;
-    if (time_delta > 100) {
-        return delta;
-    }
-
-    float factor = config->acceleration_factor / POINTER_ACCELERATION_SCALE;
-    float threshold = config->acceleration_threshold / POINTER_ACCELERATION_SCALE;
-
-    float sign = (delta >= 0) ? 1.0f : -1.0f;
-    float abs_delta = fabsf((float)delta);
-    float normalized = abs_delta / threshold;
-    float accel = sign * powf(abs_delta / threshold, factor) * threshold;
-
-
-    int result = (delta >= 0) ? (int8_t)(accel + 0.5f) : (int8_t)(accel - 0.5f);
-    if (result > INT8_MAX) result = INT8_MAX;
-    if (result < INT8_MIN) result = INT8_MIN;
-    return result;
-}
-
 static void pinnacle_report_data(const struct device *dev) {
     const struct pinnacle_config *config = dev->config;
     uint8_t packet[3];
@@ -278,7 +246,7 @@ static void pinnacle_report_data(const struct device *dev) {
         return;
     }
 
-    /*LOG_HEXDUMP_DBG(packet, 1, "Pinnacle Status1");*/
+    LOG_HEXDUMP_DBG(packet, 1, "Pinnacle Status1");
 
     // Ignore 0xFF packets that indicate communcation failure, or if SW_DR isn't asserted
     if (packet[0] == 0xFF || !(packet[0] & PINNACLE_STATUS1_SW_DR)) {
@@ -290,7 +258,7 @@ static void pinnacle_report_data(const struct device *dev) {
         return;
     }
 
-    /*LOG_HEXDUMP_DBG(packet, 3, "Pinnacle Packets");*/
+    LOG_HEXDUMP_DBG(packet, 3, "Pinnacle Packets");
 
     struct pinnacle_data *data = dev->data;
     uint8_t btn = packet[0] &
@@ -307,24 +275,20 @@ static void pinnacle_report_data(const struct device *dev) {
     }
 
     if (data->in_int) {
-        //LOG_DBG("Clearing status bit");
+        LOG_DBG("Clearing status bit");
         ret = pinnacle_clear_status(dev);
         data->in_int = true;
     }
 
     if (config->acceleration_mode != NONE) {
-        uint32_t start = k_cycle_get_32(); //TODO: Benchmark remove
-
         int64_t now = k_uptime_get();
+        int64_t time_delta = now - data->last_timestamp;
         data->last_timestamp = now;
-        if (now - data->last_timestamp< 100) {
+        // If it's been too long, reset acceleration
+        if (time_delta < 150) { // TODO: Should this be adjustable (ms)?
             dx = data->accel_lookup[dx + 127];
             dy = data->accel_lookup[dy + 127];
         }
-
-        uint32_t end = k_cycle_get_32();
-        uint32_t elapsed_ns = (uint32_t)(((uint64_t)(end - start) * 1000000000ULL) / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
-        log_accel_runtime(elapsed_ns);
     }
 
     if (!config->no_taps && (btn || data->btn_cache)) {
@@ -337,9 +301,10 @@ static void pinnacle_report_data(const struct device *dev) {
     }
 
     data->btn_cache = btn;
-
-    input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);
-    input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);
+    if (dx != 0 || dy != 0) {
+        input_report_rel(dev, INPUT_REL_X, dx, false, K_FOREVER);
+        input_report_rel(dev, INPUT_REL_Y, dy, true, K_FOREVER);
+    }
 
     return;
 }
@@ -352,7 +317,7 @@ static void pinnacle_work_cb(struct k_work *work) {
 static void pinnacle_gpio_cb(const struct device *port, struct gpio_callback *cb, uint32_t pins) {
     struct pinnacle_data *data = CONTAINER_OF(cb, struct pinnacle_data, gpio_cb);
 
-    //LOG_DBG("HW DR asserted");
+    LOG_DBG("HW DR asserted");
     data->in_int = true;
     k_work_submit(&data->work);
 }
@@ -463,7 +428,7 @@ int pinnacle_set_sleep(const struct device *dev, bool enabled) {
         return 0;
     }
 
-    //LOG_DBG("Setting sleep: %s", (enabled ? "on" : "off"));
+    // LOG_DBG("Setting sleep: %s", (enabled ? "on" : "off"));
     WRITE_BIT(sys_cfg, PINNACLE_SYS_CFG_EN_SLEEP_BIT, enabled ? 1 : 0);
 
     ret = pinnacle_write(dev, PINNACLE_SYS_CFG, sys_cfg);
@@ -475,10 +440,9 @@ int pinnacle_set_sleep(const struct device *dev, bool enabled) {
     return ret;
 }
 
-static void init_acceleration_curve(struct pinnacle_data *data,
-        struct pinnacle_config *config) {
-    
-    uint32_t start = k_cycle_get_32(); //TODO: Benchmark remove
+static void init_acceleration_curve(struct pinnacle_data *data, struct pinnacle_config *config) {
+
+    uint32_t start = k_cycle_get_32(); // TODO: Benchmark remove
 
     data->last_timestamp = k_uptime_get();
 
@@ -486,7 +450,9 @@ static void init_acceleration_curve(struct pinnacle_data *data,
 
     float factor = config->acceleration_factor / POINTER_ACCELERATION_SCALE;
     float exponent = config->acceleration_exponent / POINTER_ACCELERATION_SCALE;
-    float threshold = (mode == SIGMOID) ? (config->acceleration_threshold / POINTER_ACCELERATION_SCALE) : config->acceleration_threshold;
+    float threshold = (mode == SIGMOID)
+                          ? (config->acceleration_threshold / POINTER_ACCELERATION_SCALE)
+                          : config->acceleration_threshold;
 
     for (int delta = -127; delta <= 128; delta++) {
         float abs_delta = fabsf((float)delta);
@@ -503,14 +469,17 @@ static void init_acceleration_curve(struct pinnacle_data *data,
         float signed_accel = copysignf(accel, (float)delta);
         int acc_delta = (int)(signed_accel + 0.5f);
 
-        if (acc_delta > 127) acc_delta = 127;
-        if (acc_delta < -127) acc_delta = -127;
+        if (acc_delta > 127)
+            acc_delta = 127;
+        if (acc_delta < -127)
+            acc_delta = -127;
 
         data->accel_lookup[delta + 127] = (int8_t)acc_delta;
     }
 
     uint32_t end = k_cycle_get_32();
-    uint32_t elapsed_ns = (uint32_t)(((uint64_t)(end - start) * 1000000000ULL) / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
+    uint32_t elapsed_ns =
+        (uint32_t)(((uint64_t)(end - start) * 1000000000ULL) / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
     LOG_DBG("%s lookup table initialized in %d ns", mode, elapsed_ns);
 }
 
@@ -525,7 +494,7 @@ static int pinnacle_init(const struct device *dev) {
         LOG_ERR("Failed to get the FW ID %d", ret);
     }
 
-    //LOG_DBG("Found device with FW ID: 0x%02x, Version: 0x%02x", fw_id[0], fw_id[1]);
+    LOG_DBG("Found device with FW ID: 0x%02x, Version: 0x%02x", fw_id[0], fw_id[1]);
 
     data->in_int = false;
     k_msleep(10);
@@ -575,12 +544,12 @@ static int pinnacle_init(const struct device *dev) {
     ret = pinnacle_seq_read(dev, PINNACLE_SLEEP_INTERVAL, packet, 1);
 
     if (ret >= 0) {
-        //LOG_DBG("Default sleep interval %d", packet[0]);
+        LOG_DBG("Default sleep interval %d", packet[0]);
     }
 
     ret = pinnacle_write(dev, PINNACLE_SLEEP_INTERVAL, 255);
     if (ret <= 0) {
-        //LOG_DBG("Failed to update sleep interaval %d", ret);
+        LOG_DBG("Failed to update sleep interaval %d", ret);
     }
 
     uint8_t feed_cfg2 = PINNACLE_FEED_CFG2_EN_IM | PINNACLE_FEED_CFG2_EN_BTN_SCRL;
@@ -634,13 +603,12 @@ static int pinnacle_init(const struct device *dev) {
 
     set_int(dev, true);
 
-    if(config->acceleration_mode != NONE) {
+    if (config->acceleration_mode != NONE) {
         init_acceleration_curve(data, config);
     }
 
     return 0;
 }
-
 
 #if IS_ENABLED(CONFIG_PM_DEVICE)
 
@@ -678,10 +646,10 @@ static int pinnacle_pm_action(const struct device *dev, enum pm_device_action ac
         .y_axis_z_min = DT_INST_PROP_OR(n, y_axis_z_min, 4),                                       \
         .sensitivity = DT_INST_ENUM_IDX_OR(n, sensitivity, PINNACLE_SENSITIVITY_1X),               \
         .dr = GPIO_DT_SPEC_GET_OR(DT_DRV_INST(n), dr_gpios, {}),                                   \
-        .acceleration_mode = DT_INST_ENUM_IDX_OR(n, acceleration_mode, NONE),               \
-        .acceleration_factor = DT_INST_PROP_OR(n, acceleration_factor, 150),                      \
-        .acceleration_threshold = DT_INST_PROP_OR(n, acceleration_threshold, 950),                  \
-        .acceleration_exponent = DT_INST_PROP_OR(n, acceleration_exponent, 200),                  \
+        .acceleration_mode = DT_INST_ENUM_IDX_OR(n, acceleration_mode, NONE),                      \
+        .acceleration_factor = DT_INST_PROP_OR(n, acceleration_factor, 150),                       \
+        .acceleration_threshold = DT_INST_PROP_OR(n, acceleration_threshold, 950),                 \
+        .acceleration_exponent = DT_INST_PROP_OR(n, acceleration_exponent, 200),                   \
     };                                                                                             \
     PM_DEVICE_DT_INST_DEFINE(n, pinnacle_pm_action);                                               \
     DEVICE_DT_INST_DEFINE(n, pinnacle_init, PM_DEVICE_DT_INST_GET(n), &pinnacle_data_##n,          \

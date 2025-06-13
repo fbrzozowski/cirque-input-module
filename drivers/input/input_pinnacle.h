@@ -116,14 +116,13 @@ struct pinnacle_config {
     const struct gpio_dt_spec dr;
 
     // Acceleration(s) parameters
-    //bool sigmoid_acceleration;
-    //bool hybrid_acceleration;
+    // bool sigmoid_acceleration;
+    // bool hybrid_acceleration;
     enum pointer_acceleration_mode acceleration_mode;
 
     float acceleration_factor;
     float acceleration_threshold;
     float acceleration_exponent;
-
 };
 
 int pinnacle_set_sleep(const struct device *dev, bool enabled);
