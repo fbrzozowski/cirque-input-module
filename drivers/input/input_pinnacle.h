@@ -79,6 +79,10 @@ struct pinnacle_data {
     struct gpio_callback gpio_cb;
     struct k_work work;
 
+    int16_t accum_dx;
+    int16_t accum_dy;
+    int64_t last_report_ts;
+
     // Acceleration tracking
     int64_t last_timestamp;
     int8_t accel_lookup[256];
